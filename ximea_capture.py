@@ -91,10 +91,12 @@ class Ximea_Capture(Plugin):
         '''
         Begin Recording from Ximea Cameras.
         '''
+        os.makedirs(self.save_dir)
+
         self.START_SAVING_MSG = f'Saving Ximea Frames at {self.save_dir}...'
         logger.info(self.START_SAVING_MSG)
 
-
+        #NOW DO THE real stuff
 
 
     def on_char(self,char):
