@@ -1,0 +1,369 @@
+import copy
+#import multiprocessing as mp
+import threading
+import queue as queue
+import time
+import os as os
+import numpy as np
+from ximea import xiapi
+from collections import namedtuple
+import yaml
+import mmap
+import copy
+import sys
+import gc
+import signal
+import gc
+import ctypes
+import stat
+
+frame_data = namedtuple("frame_data", "raw_data nframe tsSec tsUSec")
+
+
+def write_sync_queue(sync_queue, cam_name, save_folder):
+    '''
+    Get() everything from the sync string queue and write it to disk.
+    Params:
+        sync_queue (Multiprocessing Queue): Queue of sync strings to write to disk
+        cam_name (str) name of camera - used for filename
+        save_folder (str) directory to save sync string
+    Returns:
+        None
+    '''
+    sync_file_name = os.path.join(save_folder, f"timestamp_camsync_{cam_name}.tsv")
+    with open(sync_file_name, 'w') as sync_file:
+        sync_file.write(f"tcam_name\t_wall\t_cam\n")
+    #open it for appending
+    sync_file = open(sync_file_name, 'a+')
+    while not sync_queue.empty():
+        sync_string = sync_queue.get()
+        sync_file.write(sync_string)
+    return()
+
+def get_sync_string(cam_name, cam_handle):
+    '''
+    Clock camera and wall clocks together to ensure they match
+    Params:
+        cam_name (str): String name of camera (ie cam_od/cam_os/cam_cy
+        cam_handle (XimeaCamera instance): camera handle to query time
+    Returns:
+        sync_string (str): string to write to file with cam name, time, and wall time
+    '''
+    t_wall_1 = time.time()
+    t_cam = cam_handle.get_param('timestamp')
+    t_cam = t_cam/(1e9) #this is returned in nanoseconds, change to seconds
+    t_wall_2 = time.time()
+    t_wall = np.mean((t_wall_1, t_wall_2)) #take middle of two wall times
+    sync_string = f'{cam_name}\t{t_wall}\t{t_cam}\n'
+    return(sync_string)
+
+
+def get_cam_settings(cam, config_file):
+    """
+    Get the current settings of this camera, settings will be saved in
+    alphabetical order, and have to be ordered correctly.
+
+    If the config file already exists, ordering of keys remains the same
+    and will only be updated.
+
+    Params:
+        camera (XimeaCamera instance): camera handle
+        config_file (str): string filename of the config file for the camera
+    """
+
+    # if the config file already exists, pull the property names from that file
+    if os.path.exists(config_file):
+        with open(config_file, 'r') as f:
+            settings = yaml.safe_load(f)
+        prop_names = list(settings.keys())
+
+    # otherwise we have to grab them manually from the camera
+    else:
+        deny_list = ["api_progress_callback", "device_",
+                    'list', 'ccMTX', '_file_name', "ffs_",
+                    '_revision', "_profile", "number_devices",
+                    "hdr_", "lens_focus_move", 'manual_wb', "trigger_software"]
+        prop_names = []
+        for prop in dir(cam):
+            if "get_" not in prop:
+                continue
+
+            prop = prop.replace("get_", "")
+
+            if f"set_{prop}" not in dir(cam):
+                continue
+
+            if any([f in prop for f in deny_list]):
+                continue
+
+            prop_names.append(prop)
+
+        for prop in dir(cam):
+            if "enable_" not in prop:
+                continue
+            prop = prop.replace("enable_", '')
+
+            if f"disable_{prop}" not in dir(cam):
+                continue
+
+            prop_names.append("is_" + prop)
+
+    # go through the list of property names and attempt to get them
+    # from the camera, if the camera gets grumpy, ignore it.
+    cam_props = {}
+    for prop in prop_names:
+        if "is_" in prop:
+            try:
+                cam_props[prop] = cam.__getattribute__(prop)()
+            except:
+                pass
+        else:
+            try:
+                cam_props[prop] = cam.__getattribute__(f"get_{prop}")()
+            except:
+                pass
+
+    # take our collected properties and stuff them back into the config
+    with open(config_file, 'w') as f:
+        yaml.dump(cam_props, f, default_flow_style = False)
+
+def apply_cam_settings(cam, config_file):
+    """
+    Apply settings to the camera from a config file.
+
+    Params:
+        camera (XimeaCamera instance): camera handle
+        config_file (str): string filename of the config file for the camera
+    """
+    with open(config_file, 'r') as f:
+        cam_props = yaml.safe_load(f)
+
+    for prop, value in cam_props.items():
+        #print(prop, value)
+        if f"set_{prop}" in dir(cam):
+            try:
+                cam.__getattribute__(f"set_{prop}")(value)
+            except Exception as e:
+                print(e)
+        elif prop in dir(cam) and "is_" in prop:
+            en_dis = "enable_" if value else "disable_"
+            try:
+                cam.__getattribute__(f"{en_dis}{prop.replace('is_', '')}")()
+            except Exception as e:
+                print(e)
+
+        else:
+            print(f"Camera doesn't have a set_{prop}")
+
+def save_queue_worker(cam_name, save_queue_out, save_folder, ims_per_file=100):
+    if not os.path.exists(os.path.join(save_folder, cam_name)):
+        os.makedirs(os.path.join(save_folder, cam_name))
+        #os.chmod(save_folder, stat.S_IRWXO)
+    ts_file_name = os.path.join(save_folder, f"timestamps_{cam_name}.tsv")
+    #make a new blank timestamp file
+    with open(ts_file_name, 'w') as ts_file:
+        ts_file.write(f"nframe\ttime\n")
+    #open it for appending
+    ts_file = open(ts_file_name, 'a+')
+    i = 0
+    try:
+        if(ims_per_file == 1):
+            while True:
+                bin_file_name = os.path.join(save_folder, cam_name, f'frame_{i}.bin')
+                f = os.open(bin_file_name, os.O_WRONLY | os.O_CREAT , 0o777 | os.O_TRUNC | os.O_SYNC | os.O_DIRECT)
+                image = save_queue_out.get()
+                os.write(f, image.raw_data)
+                ts_file.write(f"{i}\t{image.nframe}\t{image.tsSec}.{str(image.tsUSec).zfill(6)}\n")
+                i+=1
+        else:
+            while True:
+                fstart=i*ims_per_file
+                bin_file_name = os.path.join(save_folder, cam_name, f'frames_{fstart}_{fstart+ims_per_file-1}.bin')
+                f = os.open(bin_file_name, os.O_WRONLY | os.O_CREAT , 0o777 | os.O_TRUNC | os.O_SYNC | os.O_DIRECT)
+                for j in range(ims_per_file):
+                    image = save_queue_out.get()
+                    os.write(f, image.raw_data)
+                    ts_file.write(f"{fstart+j}\t{image.nframe}\t{image.tsSec}.{str(image.tsUSec).zfill(6)}\n")
+                os.close(f)
+                i+=1
+
+    except Exception as e:
+        print(f'Exception!: e')
+        print('Exiting Save Thread')
+
+
+def init_camera(cam_id, settings_file, logger):
+    '''
+    Initialize a ximea camera for use (recoring and preview) by external scripts
+    Params:
+        cam_id (str): Serial number of camera to opening
+        setttings_file (str): Path to settings file for camera
+        logger (instace of class logger): used to pass messages to gui
+    Returns:
+        camera (instace of class Ximea Camera): A camera that produces Images
+        iamge_handle (Ximea Camera image): handle to point to images from camera
+        open_success (bool): Were we able to open the camera?
+    '''
+    try:
+        logger.info(f'Opening Ximea Camera {cam_id}')
+        camera = xiapi.Camera()
+        camera.open_device_by_SN(cam_id)
+        logger.info('Sucessfully Opened Camera')
+        apply_cam_settings(camera, settings_file)
+        logger.info('Sucessfully Applied Settings to Camera')
+        camera.start_acquisition()
+        image = xiapi.Image()
+        logger.info('Sucessfully Started Aquisition')
+        return(camera, image, True)
+    except:
+        logger.info('Problem initializing camera.')
+        logger.info('Check .yaml file')
+        camera.stop_acquisition()
+        camera.close_device()
+        return(None, None, False)
+
+def aquire_camera(cam_id, cam_name, sync_queue_in, save_queue_in, stop_collecting, settings_file, logger):
+
+    """
+    Acquire frames from a single camera. Can have mulitple instances of this to record from multiple cameras.
+
+    Parameters:
+        cam_id (str):  The serial number of the camera
+        cam_name (str): A text name for the camera
+        sync_queue (Multithreading.Queue): A queue which accepts the sync strings
+        save_queue (Mutlithreading.Queue): A queue which accepts xiapi.Images
+        stop_collecting (threading.Event): keep collecting until this is set
+
+        Any keywords which are present in default_settings may also be passed as
+        keyword arguments to this function as well.
+        IE:
+            aquire_camera("some_id",
+                           "a camera",
+                           Q,
+                           Q2,
+                           10,
+                           timing_mode=None,
+                           framerate=None, ...)
+
+    """
+
+    try:
+        logger.info(f'Opening Ximea Camera {cam_name}')
+        camera = xiapi.Camera()
+        camera.open_device_by_SN(cam_id)
+
+        apply_cam_settings(camera, settings_file)
+        framerate = camera.__getattribute__(f"get_framerate")()
+
+        logger.info(f'Recording Timestamp Syncronization Pre...')
+        sync_str = get_sync_string(cam_name + "_pre", camera)
+        sync_queue_in.put(sync_str)
+
+        camera.start_acquisition()
+        image = xiapi.Image()
+
+        logger.info(f'Begin Recording..')
+
+        if stop_collecting:
+            logger.info('Stop Collecting is true')
+        while not stop_collecting.is_set():
+            camera.get_image(image)
+            data = image.get_image_data_raw()
+            save_queue_in.put(frame_data(data,
+                                   image.nframe,
+                                   image.tsSec,
+                                   image.tsUSec))
+
+        logger.info(f'Stopping Ximea Collection for {cam_name}')
+        sync_str = get_sync_string(cam_name + "_post", camera)
+        sync_queue_in.put(sync_str)
+
+    except Exception as e:
+        logger.info(f'Detected Exception {e} Stopping Acquisition')
+        sync_str = get_sync_string(cam_name + "_post", camera)
+        sync_queue_in.put(sync_str)
+
+    finally:
+        logger.info(f"Camera {cam_name} Cleanup...")
+        camera.stop_acquisition()
+        camera.close_device()
+        logger.info(f"Camera {cam_name} aquisition finished")
+
+
+def ximea_acquire(save_folders_list, settings_file, logger, ims_per_file=100, memsize=10, num_cameras=1):
+
+    #use this syntax for variable number of cameras
+    camera_name_list = ['cy', 'os','od']
+    camera_sn_list = ["XECAS1930001", "XEMAS1836000", "XECAS1922000"]
+    cameras = { camera_name_list[i] : camera_sn_list[i] for i in range(num_cameras) }
+
+    #can use this syntax when we stabily  have all 3 cameras
+    #cameras = {'od': "XECAS1922000",
+    #           'cy': "XECAS1930001",
+    #           'os': "XECAS1922001"}
+
+    save_folders = [save_folders_list[0],
+                    save_folders_list[0], # this line should be [0] when using 3 camears
+                    save_folders_list[0]
+                   ]
+
+    save_queues = [queue.Queue() for _ in cameras]
+    sync_queues = [queue.Queue() for _ in cameras]
+
+    for save_folder in save_folders_list:
+        if not os.path.exists(save_folder):
+            os.makedirs(save_folder)
+
+    stop_collecting = threading.Event()
+
+    try:
+        #start save threads
+        save_threads = []
+        for i, cam in enumerate(cameras):
+            proc = threading.Thread(target=save_queue_worker, args=(cam,
+                                                 save_queues[i],
+                                                 save_folders[i],
+                                                 ims_per_file))
+            proc.daemon = True
+            proc.start()
+            save_threads.append(proc)
+
+        #start aquisition threads
+        acquisition_threads = []
+        for i, (cam_name, cam_sn) in enumerate(cameras.items()):
+            proc = threading.Thread(target=aquire_camera,
+                              args=(cam_sn,
+                                    cam_name,
+                                    sync_queues[i],
+                                    save_queues[i],
+                                    stop_collecting,
+                                    settings_file,
+                                    logger))
+            proc.daemon = False
+            acquisition_threads.append(proc)
+
+        logger.info("Starting Acquisition threads...")
+        for proc in acquisition_threads:
+            proc.start()
+
+        for proc in acquisition_threads:
+            proc.join()
+        logger.info(f"Finished Aquiring...")
+
+        logger.info(f"Saving Timestamp Sync Information...")
+        for i, (cam_name, cam_sn) in enumerate(cameras.items()):
+            write_sync_queue(sync_queues[i], cam_name, save_folders[i])
+
+        logger.info(f" Waiting for Save Queues to Empty...")
+        for q in save_queues:
+            while not q.empty():
+                time.sleep(1)
+
+        logger.info(f"Pipes are Empty. Camera Collection Finished without Interrupt")
+
+    except KeyboardInterrupt:
+        logger.info(f'Detected Keyboard Interrupt (main thread). Stopping Camera Acquisition')
+        #stop_collecting.set()
+
+    finally:
+        logger.info(f"All Finished - Ending Ximea Camera Now.")
