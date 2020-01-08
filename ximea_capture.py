@@ -31,11 +31,13 @@ class Ximea_Capture(Plugin):
     Ximea Capture captures frames from a Ximea camera
     during collection in parallel with world camera
     """
-    icon_chr = chr(0xEC09)
-    icon_font = "pupil_icons"
+    #icon_chr = chr(0xEC09)
+    #icon_font = "pupil_icons"
+    icon_font = "roboto"
+    icon_chr = "X"
 
     def __init__(self, g_pool,
-    record_ximea=False, preview_ximea=False,
+    record_ximea=False, preview_ximea=True,
     serial_num='XECAS1930001', subject='TEST_SUBJECT', task='TEST_TASK',
      yaml_loc='/home/vasha/cy.yaml', imshape=(2064,1544)):
         super().__init__(g_pool)
@@ -49,7 +51,6 @@ class Ximea_Capture(Plugin):
         self.subject = subject
         self.task = task
         self.imshape = imshape
-        print(g_pool)
 
         self.camera = None
         self.image_handle = None
@@ -125,14 +126,10 @@ class Ximea_Capture(Plugin):
                 im = np.zeros((*self.imshape,3)).astype(np.uint8)
                 alp = 0.5
             else:
-                self.camera.get_image(self.image_handle)
-                im = image.get_image_data_raw()
-                im = np.array(im).reshape(self.imshape)
-                im = cv2.cvtColor(np.uint8(im), cv2.COLOR_BayerGR2RGB)
-                im = im.astype(np.uint8)
+                im = ximea_utils.decode_ximea_frame(self.camera, self.image_handle, self.imshape, logger)
                 alp=1
             gl_utils.make_coord_system_norm_based()
-            draw_gl_texture(im, interpolation=False, alpha=alp)
+            draw_gl_texture(im, interpolation=True, alpha=alp)
 
     def get_init_dict(self):
         return {}
@@ -181,3 +178,13 @@ class Ximea_Capture(Plugin):
 
     def deinit_ui(self):
         self.remove_menu()
+
+
+    def cleanup(self):
+        """
+        gets called when the plugin get terminated.
+        This happens either voluntarily or forced.
+        if you have an gui or glfw window destroy it here.
+        """
+        if not self.camera == None:
+            self.camera.close_device()

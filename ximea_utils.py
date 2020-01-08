@@ -16,6 +16,9 @@ import signal
 import gc
 import ctypes
 import stat
+import cv2
+import struct
+import base64
 
 frame_data = namedtuple("frame_data", "raw_data nframe tsSec tsUSec")
 
@@ -221,6 +224,33 @@ def init_camera(cam_id, settings_file, logger):
         camera.stop_acquisition()
         camera.close_device()
         return(None, None, False)
+        
+
+def decode_ximea_frame(camera, image_handle, imshape, logger):
+    '''
+    Get a single frame from ximea cameras
+    '''
+    camera.get_image(image_handle)
+    im = image_handle.get_image_data_raw()
+    #logger.info(type(im))
+    #im = base64.standard_b64decode(im)
+    #logger.info(type(im))
+    #im = struct.iter_unpack('>B', im)
+    #im = [int.from_bytes(i, byteorder='big') for i in im]
+    #im = [int.from_bytes(bs,'big') for bs in im]
+    #dt = np.dtype(int).newbyteorder('>')
+    im = np.frombuffer(im,dtype='uint8') #.byteswap()
+    #im = np.ndarray(shape=imshape, dtype='uint8',buffer=im)
+    #im = int.from_bytes(im,'big')
+    #logger.info(im.shape)
+    #im = bytearray(str(im), 'utf-8')
+    #im = im.astype(np.uint8)
+    #im = struct.unpack(">Q", im)[0]
+    im = np.array(list(im)).reshape(imshape)
+    im = cv2.cvtColor(im, cv2.COLOR_BayerGR2RGB)
+    #import scipy.misc
+    #scipy.misc.imsave('outfile.jpg', im)
+    return(im)
 
 def aquire_camera(cam_id, cam_name, sync_queue_in, save_queue_in, stop_collecting, settings_file, logger):
 
