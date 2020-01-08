@@ -12,7 +12,7 @@ Xiapi - Available from ximea.com
 Yaml - used to read in and out camera settings
 
 #### With Package Managed Pupil Capture:
-I installed these by manually copying them to /opt/pupil_capture - You may be able to put them in the ~/pupil_capture_settings/packages/ folder also, but this has not been tested.
+I installed these by manually copying them to /opt/pupil_capture - Putting these packages in the standard ~/pupil_capture_settings/plugins does not work.
 
 #### With Source Pupil Capture
 Install these with your package manager of choice in the python install used by pupil capture  
