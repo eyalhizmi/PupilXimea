@@ -25,6 +25,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 import os
+import cv2
 
 class Ximea_Capture(Plugin):
     """
@@ -39,7 +40,7 @@ class Ximea_Capture(Plugin):
     def __init__(self, g_pool,
     record_ximea=False, preview_ximea=True,
     serial_num='XECAS1930001', subject='TEST_SUBJECT', task='TEST_TASK',
-     yaml_loc='/home/vasha/cy.yaml', imshape=(2064,1544)):
+     yaml_loc='/home/vasha/cy.yaml', imshape=(1544, 2064)):
         super().__init__(g_pool)
         self.order = 0.8
         #self.pupil_display_list = []
@@ -128,6 +129,8 @@ class Ximea_Capture(Plugin):
             else:
                 im = ximea_utils.decode_ximea_frame(self.camera, self.image_handle, self.imshape, logger)
                 alp=1
+            #cv2.imshow('image',im)
+            cv2.imwrite('/home/vasha/img.png', im)
             gl_utils.make_coord_system_norm_based()
             draw_gl_texture(im, interpolation=True, alpha=alp)
 

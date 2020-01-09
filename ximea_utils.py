@@ -1,5 +1,4 @@
 import copy
-#import multiprocessing as mp
 import threading
 import queue as queue
 import time
@@ -224,9 +223,9 @@ def init_camera(cam_id, settings_file, logger):
         camera.stop_acquisition()
         camera.close_device()
         return(None, None, False)
-        
 
-def decode_ximea_frame(camera, image_handle, imshape, logger):
+
+def decode_ximea_frame(camera, image_handle, imshape, logger, norm=True):
     '''
     Get a single frame from ximea cameras
     '''
@@ -240,14 +239,20 @@ def decode_ximea_frame(camera, image_handle, imshape, logger):
     #im = [int.from_bytes(bs,'big') for bs in im]
     #dt = np.dtype(int).newbyteorder('>')
     im = np.frombuffer(im,dtype='uint8') #.byteswap()
-    #im = np.ndarray(shape=imshape, dtype='uint8',buffer=im)
+    #m = np.ndarray(shape=imshape, dtype='uint8',buffer=im)
     #im = int.from_bytes(im,'big')
     #logger.info(im.shape)
     #im = bytearray(str(im), 'utf-8')
     #im = im.astype(np.uint8)
     #im = struct.unpack(">Q", im)[0]
-    im = np.array(list(im)).reshape(imshape)
-    im = cv2.cvtColor(im, cv2.COLOR_BayerGR2RGB)
+    im = im.reshape(imshape)
+    im = cv2.cvtColor(im, cv2.COLOR_BayerRG2BGR)
+    im = cv2.flip(im, -1)
+    if(norm):
+        #im = im/100.
+        #im[im>1] = 1
+        #im = im * 255
+        im = cv2.normalize(im, None, 0, 255, cv2.NORM_MINMAX)
     #import scipy.misc
     #scipy.misc.imsave('outfile.jpg', im)
     return(im)
