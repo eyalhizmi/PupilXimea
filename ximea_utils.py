@@ -257,72 +257,105 @@ def decode_ximea_frame(camera, image_handle, imshape, logger, norm=True):
     #scipy.misc.imsave('outfile.jpg', im)
     return(im)
 
-def aquire_camera(cam_id, cam_name, sync_queue_in, save_queue_in, stop_collecting, settings_file, logger):
+
+def aquire_camera(camera, image_handle, sync_queue, save_queue, stop_collecting_event, logger):
 
     """
     Acquire frames from a single camera. Can have mulitple instances of this to record from multiple cameras.
 
     Parameters:
-        cam_id (str):  The serial number of the camera
-        cam_name (str): A text name for the camera
-        sync_queue (Multithreading.Queue): A queue which accepts the sync strings
+        camera (Ximea Camera) Instance of a ximea camera
+        image_handle (Ximea Image) Instance of Ximea camera image
+        sync_queue (Mutlithreading.Queue): A queue to sync timestamps of camera and computer
         save_queue (Mutlithreading.Queue): A queue which accepts xiapi.Images
         stop_collecting (threading.Event): keep collecting until this is set
-
-        Any keywords which are present in default_settings may also be passed as
-        keyword arguments to this function as well.
-        IE:
-            aquire_camera("some_id",
-                           "a camera",
-                           Q,
-                           Q2,
-                           10,
-                           timing_mode=None,
-                           framerate=None, ...)
 
     """
 
     try:
-        logger.info(f'Opening Ximea Camera {cam_name}')
-        camera = xiapi.Camera()
-        camera.open_device_by_SN(cam_id)
-
-        apply_cam_settings(camera, settings_file)
-        framerate = camera.__getattribute__(f"get_framerate")()
-
-        logger.info(f'Recording Timestamp Syncronization Pre...')
-        sync_str = get_sync_string(cam_name + "_pre", camera)
-        sync_queue_in.put(sync_str)
-
-        camera.start_acquisition()
-        image = xiapi.Image()
-
         logger.info(f'Begin Recording..')
 
-        if stop_collecting:
+        if stop_collecting_event:
             logger.info('Stop Collecting is true')
-        while not stop_collecting.is_set():
-            camera.get_image(image)
-            data = image.get_image_data_raw()
-            save_queue_in.put(frame_data(data,
-                                   image.nframe,
-                                   image.tsSec,
-                                   image.tsUSec))
+        while not stop_collecting_event.is_set():
+            camera.get_image(image_handle)
+            data = image_handle.get_image_data_raw()
+            save_queue.put(frame_data(data,
+                                   image_handle.nframe,
+                                   image_handle.tsSec,
+                                   image_handle.tsUSec))
 
-        logger.info(f'Stopping Ximea Collection for {cam_name}')
+        logger.info(f'Stopping Ximea Collection')
         sync_str = get_sync_string(cam_name + "_post", camera)
-        sync_queue_in.put(sync_str)
+        sync_queue.put(sync_str)
 
     except Exception as e:
         logger.info(f'Detected Exception {e} Stopping Acquisition')
         sync_str = get_sync_string(cam_name + "_post", camera)
-        sync_queue_in.put(sync_str)
+        sync_queue.put(sync_str)
 
     finally:
-        logger.info(f"Camera {cam_name} Cleanup...")
-        camera.stop_acquisition()
-        camera.close_device()
-        logger.info(f"Camera {cam_name} aquisition finished")
+        logger.info(f"Camera aquisition finished")
+
+def start_ximea_aquisition(camera, image_handle,
+                            save_dir, ims_per_file,
+                            stop_collecting_event,
+                            logger):
+
+    save_queue = queue.Queue()
+    sync_queue = queue.Queue()
+
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+
+    save_proc = threading.Thread(target=save_queue_worker,
+                            args=(camera,
+                                 save_queue,
+                                 save_dir,
+                                 ims_per_file))
+
+    acq_proc = threading.Thread(target=aquire_camera,
+                          args=(camera,
+                                image_handle,
+                                sync_queue,
+                                save_queue,
+                                stop_collecting_event,
+                                logger))
+    save_proc.daemon = True
+    save_proc.start()
+    acq_proc.daemon = False
+    acq_proc.start()
+
+    return(save_queue)
+
+def notify_ximea_save_finished(save_queue, currently_saving, logger):
+    '''
+    Notify when save threads are done.
+    '''
+    logger.info(f" Waiting for Save Queues to Empty...")
+    while not save_queue.empy():
+        time.sleep(1)
+
+    logger.info(f"Finished Saving")
+    currently_saving = False
+
+def end_ximea_aquisition(save_queue,
+                         currently_saving,
+                         logger):
+
+    notify_proc = threading.Thread(target=notify_ximea_save_finished,
+                          args=(save_queue, currently_saving,
+                                logger))
+    notify_proc.daemon = True
+    notify_proc.start()
+
+    save_queue.join()
+
+    logger.info(f"Finished Aquiring...")
+
+    # logger.info(f"Saving Timestamp Sync Information...")
+    # for i, (cam_name, cam_sn) in enumerate(cameras.items()):
+    #     write_sync_queue(sync_queues[i], cam_name, save_folders[i])
 
 
 def ximea_acquire(save_folders_list, settings_file, logger, ims_per_file=100, memsize=10, num_cameras=1):

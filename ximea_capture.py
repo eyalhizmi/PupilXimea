@@ -17,7 +17,7 @@ import numpy as np
 
 from video_overlay.plugins.generic_overlay import Video_Overlay
 
-
+import threading
 import ximea_utils
 
 #logging
@@ -38,9 +38,9 @@ class Ximea_Capture(Plugin):
     icon_chr = "X"
 
     def __init__(self, g_pool,
-    record_ximea=False, preview_ximea=True,
+    record_ximea=True, preview_ximea=False,
     serial_num='XECAS1930001', subject='TEST_SUBJECT', task='TEST_TASK',
-     yaml_loc='/home/vasha/cy.yaml', imshape=(1544, 2064)):
+     yaml_loc='/home/vasha/cy.yaml', imshape=(1544, 2064), ims_per_file=200):
         super().__init__(g_pool)
         self.order = 0.8
         #self.pupil_display_list = []
@@ -52,17 +52,16 @@ class Ximea_Capture(Plugin):
         self.subject = subject
         self.task = task
         self.imshape = imshape
+        self.ims_per_file = ims_per_file
 
         self.camera = None
         self.image_handle = None
         self.camera_open = False
         self.currently_recording = False
         self.currently_saving = False
+        self.save_queue =  None
         self.blink_counter = 0
-
-        self.START_RECORDING_MSG = 'Recording from Ximea Cameras...'
-        self.STOP_RECORDING_MSG = 'Stopped Recording from Ximea Cameras. Cleaning Up and Saving...'
-        self.DONE_SAVING_MSG = 'Finished Saving Ximea Frames...'
+        self.stop_collecting_event = threading.Event()
 
         self.camera, self.image_handle, self.camera_open = ximea_utils.init_camera(self.serial_num, self.yaml_loc, logger)
 
@@ -137,25 +136,6 @@ class Ximea_Capture(Plugin):
     def get_init_dict(self):
         return {}
 
-
-
-    def start_recording(self):
-        '''
-        Begin Recording from Ximea Cameras.
-        '''
-
-        self.START_SAVING_MSG = f'Saving Ximea Frames at {self.save_dir}...'
-        logger.info(self.START_SAVING_MSG)
-
-        ximea_utils.ximea_acquire([self.save_dir],
-                                    settings_file = self.yaml_loc,
-                                    logger = logger,
-                                    ims_per_file = 100,
-                                    num_cameras = 1)
-        self.currently_recording = False
-        self.currently_saving = False
-
-
     def on_char(self,char):
         '''
         When we hit record, also start recording from ximea cameras
@@ -163,20 +143,24 @@ class Ximea_Capture(Plugin):
         if(char=='r'):
             if(self.record_ximea):
                 if(self.currently_recording):
-                    logger.info(self.STOP_RECORDING_MSG)
+                    logger.info('Stopping Recording from Ximea Cameras...')
+                    self.stop_collecting_event.set()
+                    ximea_utils.end_ximea_aquisition(self.save_queue, self.currently_saving,
+                                                     logger)
                     self.currently_recording = False
-                    #self.menu.append(ui.Info_Text(self.STOP_RECORDING_MSG))
+                    logger.info('Finishing Saving Frames....')
 
                 elif(self.currently_saving and not self.currently_recording):
-                    logger.info('Can\'t Start Recording Again until saving finished!')
+                    logger.info('Ximea Can\'t Start Recording Again until saving finished! Only World & Eye Cameras are Recording!')
 
                 else:
-                    logger.info(self.START_RECORDING_MSG)
-                    #self.menu.append(ui.Info_Text(self.START_RECORDING_MSG))
+                    logger.info('Starting Recording from Ximea Cameras...')
+                    logger.info(f'Saving Ximea Frames at {self.save_dir}...')
+                    self.save_queue = ximea_utils.start_ximea_aquisition(self.camera, self.image_handle,
+                                                       self.save_dir, self.ims_per_file,
+                                                       self.stop_collecting_event, logger)
                     self.currently_recording = True
                     self.currently_saving = True
-                    self.start_recording()
-
         return(False)
 
     def deinit_ui(self):
