@@ -21,7 +21,6 @@ import base64
 
 frame_data = namedtuple("frame_data", "raw_data nframe tsSec tsUSec")
 
-
 def write_sync_queue(sync_queue, cam_name, save_folder):
     '''
     Get() everything from the sync string queue and write it to disk.
@@ -59,7 +58,6 @@ def get_sync_string(cam_name, cam_handle):
     sync_string = f'{cam_name}\t{t_wall}\t{t_cam}\n'
     return(sync_string)
 
-
 def apply_cam_settings(cam, config_file):
     """
     Apply settings to the camera from a config file.
@@ -88,7 +86,7 @@ def apply_cam_settings(cam, config_file):
         else:
             print(f"Camera doesn't have a set_{prop}")
 
-def save_queue_worker(cam_name, save_queue_out, save_folder, ims_per_file, logger):
+def save_queue_worker(cam_name, save_queue_out, save_folder, ims_per_file, stop_collecting_event, logger):
     try:
         if not os.path.exists(os.path.join(save_folder, cam_name)):
             os.makedirs(os.path.join(save_folder, cam_name))
@@ -100,9 +98,9 @@ def save_queue_worker(cam_name, save_queue_out, save_folder, ims_per_file, logge
         #open it for appending
         ts_file = open(ts_file_name, 'a+')
         i = 0
-
+        logger.info('Started Saving...')
         if(ims_per_file == 1):
-            while True:
+            while (not stop_collecting_event.is_set())  or save_queue_out.empty():
                 bin_file_name = os.path.join(save_folder, cam_name, f'frame_{i}.bin')
                 f = os.open(bin_file_name, os.O_WRONLY | os.O_CREAT , 0o777 | os.O_TRUNC | os.O_SYNC | os.O_DIRECT)
                 image = save_queue_out.get()
@@ -110,8 +108,7 @@ def save_queue_worker(cam_name, save_queue_out, save_folder, ims_per_file, logge
                 ts_file.write(f"{i}\t{image.nframe}\t{image.tsSec}.{str(image.tsUSec).zfill(6)}\n")
                 i+=1
         else:
-            logger.info('Started Saving...')
-            while True:
+            while (not stop_collecting_event.is_set())  or save_queue_out.empty():
                 fstart=i*ims_per_file
                 bin_file_name = os.path.join(save_folder, cam_name, f'frames_{fstart}_{fstart+ims_per_file-1}.bin')
                 f = os.open(bin_file_name, os.O_WRONLY | os.O_CREAT , 0o777 | os.O_TRUNC | os.O_SYNC | os.O_DIRECT)
@@ -172,7 +169,7 @@ def decode_ximea_frame(camera, image_handle, imshape, logger, norm=True):
         im = cv2.normalize(im, None, 0, 255, cv2.NORM_MINMAX)
     return(im)
 
-def aquire_camera(camera, image_handle, sync_queue, save_queue, stop_collecting_event, logger):
+def aquire_camera_worker(camera, image_handle, cam_name, sync_queue, save_queue, stop_collecting_event, logger):
 
     """
     Acquire frames from a single camera. Can have mulitple instances of this to record from multiple cameras.
@@ -189,8 +186,6 @@ def aquire_camera(camera, image_handle, sync_queue, save_queue, stop_collecting_
     try:
         logger.info(f'Begin Recording..')
 
-        if stop_collecting_event.is_set():
-            logger.info('Stop Collecting is set')
         while not stop_collecting_event.is_set():
             camera.get_image(image_handle)
             data = image_handle.get_image_data_raw()
@@ -226,11 +221,13 @@ def start_ximea_aquisition(camera, image_handle,
     save_proc = threading.Thread(target=save_queue_worker,
                             args=(cam_name, save_queue,
                                  save_dir, ims_per_file,
+                                 stop_collecting_event,
                                  logger))
 
-    acq_proc = threading.Thread(target=aquire_camera,
+    acq_proc = threading.Thread(target=aquire_camera_worker,
                           args=(camera,
                                 image_handle,
+                                cam_name,
                                 sync_queue,
                                 save_queue,
                                 stop_collecting_event,
