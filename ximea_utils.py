@@ -157,18 +157,19 @@ def apply_cam_settings(cam, config_file):
         else:
             print(f"Camera doesn't have a set_{prop}")
 
-def save_queue_worker(cam_name, save_queue_out, save_folder, ims_per_file=100):
-    if not os.path.exists(os.path.join(save_folder, cam_name)):
-        os.makedirs(os.path.join(save_folder, cam_name))
-        #os.chmod(save_folder, stat.S_IRWXO)
-    ts_file_name = os.path.join(save_folder, f"timestamps_{cam_name}.tsv")
-    #make a new blank timestamp file
-    with open(ts_file_name, 'w') as ts_file:
-        ts_file.write(f"nframe\ttime\n")
-    #open it for appending
-    ts_file = open(ts_file_name, 'a+')
-    i = 0
+def save_queue_worker(cam_name, save_queue_out, save_folder, ims_per_file, logger):
     try:
+        if not os.path.exists(os.path.join(save_folder, cam_name)):
+            os.makedirs(os.path.join(save_folder, cam_name))
+            #os.chmod(save_folder, stat.S_IRWXO)
+        ts_file_name = os.path.join(save_folder, f"timestamps_{cam_name}.tsv")
+        #make a new blank timestamp file
+        with open(ts_file_name, 'w') as ts_file:
+            ts_file.write(f"nframe\ttime\n")
+        #open it for appending
+        ts_file = open(ts_file_name, 'a+')
+        i = 0
+
         if(ims_per_file == 1):
             while True:
                 bin_file_name = os.path.join(save_folder, cam_name, f'frame_{i}.bin')
@@ -178,6 +179,7 @@ def save_queue_worker(cam_name, save_queue_out, save_folder, ims_per_file=100):
                 ts_file.write(f"{i}\t{image.nframe}\t{image.tsSec}.{str(image.tsUSec).zfill(6)}\n")
                 i+=1
         else:
+            logger.info('Started Saving...')
             while True:
                 fstart=i*ims_per_file
                 bin_file_name = os.path.join(save_folder, cam_name, f'frames_{fstart}_{fstart+ims_per_file-1}.bin')
@@ -275,8 +277,8 @@ def aquire_camera(camera, image_handle, sync_queue, save_queue, stop_collecting_
     try:
         logger.info(f'Begin Recording..')
 
-        if stop_collecting_event:
-            logger.info('Stop Collecting is true')
+        if stop_collecting_event.is_set():
+            logger.info('Stop Collecting is set')
         while not stop_collecting_event.is_set():
             camera.get_image(image_handle)
             data = image_handle.get_image_data_raw()
@@ -308,11 +310,11 @@ def start_ximea_aquisition(camera, image_handle,
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
+    cam_name = 'ximea'
     save_proc = threading.Thread(target=save_queue_worker,
-                            args=(camera,
-                                 save_queue,
-                                 save_dir,
-                                 ims_per_file))
+                            args=(cam_name, save_queue,
+                                 save_dir, ims_per_file,
+                                 logger))
 
     acq_proc = threading.Thread(target=aquire_camera,
                           args=(camera,
