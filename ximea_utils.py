@@ -233,32 +233,13 @@ def decode_ximea_frame(camera, image_handle, imshape, logger, norm=True):
     '''
     camera.get_image(image_handle)
     im = image_handle.get_image_data_raw()
-    #logger.info(type(im))
-    #im = base64.standard_b64decode(im)
-    #logger.info(type(im))
-    #im = struct.iter_unpack('>B', im)
-    #im = [int.from_bytes(i, byteorder='big') for i in im]
-    #im = [int.from_bytes(bs,'big') for bs in im]
-    #dt = np.dtype(int).newbyteorder('>')
     im = np.frombuffer(im,dtype='uint8') #.byteswap()
-    #m = np.ndarray(shape=imshape, dtype='uint8',buffer=im)
-    #im = int.from_bytes(im,'big')
-    #logger.info(im.shape)
-    #im = bytearray(str(im), 'utf-8')
-    #im = im.astype(np.uint8)
-    #im = struct.unpack(">Q", im)[0]
     im = im.reshape(imshape)
     im = cv2.cvtColor(im, cv2.COLOR_BayerRG2BGR)
     im = cv2.flip(im, -1)
     if(norm):
-        #im = im/100.
-        #im[im>1] = 1
-        #im = im * 255
         im = cv2.normalize(im, None, 0, 255, cv2.NORM_MINMAX)
-    #import scipy.misc
-    #scipy.misc.imsave('outfile.jpg', im)
     return(im)
-
 
 def aquire_camera(camera, image_handle, sync_queue, save_queue, stop_collecting_event, logger):
 
@@ -358,82 +339,3 @@ def end_ximea_aquisition(save_queue,
     # logger.info(f"Saving Timestamp Sync Information...")
     # for i, (cam_name, cam_sn) in enumerate(cameras.items()):
     #     write_sync_queue(sync_queues[i], cam_name, save_folders[i])
-
-
-def ximea_acquire(save_folders_list, settings_file, logger, ims_per_file=100, memsize=10, num_cameras=1):
-
-    #use this syntax for variable number of cameras
-    camera_name_list = ['cy', 'os','od']
-    camera_sn_list = ["XECAS1930001", "XEMAS1836000", "XECAS1922000"]
-    cameras = { camera_name_list[i] : camera_sn_list[i] for i in range(num_cameras) }
-
-    #can use this syntax when we stabily  have all 3 cameras
-    #cameras = {'od': "XECAS1922000",
-    #           'cy': "XECAS1930001",
-    #           'os': "XECAS1922001"}
-
-    save_folders = [save_folders_list[0],
-                    save_folders_list[0], # this line should be [0] when using 3 camears
-                    save_folders_list[0]
-                   ]
-
-    save_queues = [queue.Queue() for _ in cameras]
-    sync_queues = [queue.Queue() for _ in cameras]
-
-    for save_folder in save_folders_list:
-        if not os.path.exists(save_folder):
-            os.makedirs(save_folder)
-
-    stop_collecting = threading.Event()
-
-    try:
-        #start save threads
-        save_threads = []
-        for i, cam in enumerate(cameras):
-            proc = threading.Thread(target=save_queue_worker, args=(cam,
-                                                 save_queues[i],
-                                                 save_folders[i],
-                                                 ims_per_file))
-            proc.daemon = True
-            proc.start()
-            save_threads.append(proc)
-
-        #start aquisition threads
-        acquisition_threads = []
-        for i, (cam_name, cam_sn) in enumerate(cameras.items()):
-            proc = threading.Thread(target=aquire_camera,
-                              args=(cam_sn,
-                                    cam_name,
-                                    sync_queues[i],
-                                    save_queues[i],
-                                    stop_collecting,
-                                    settings_file,
-                                    logger))
-            proc.daemon = False
-            acquisition_threads.append(proc)
-
-        logger.info("Starting Acquisition threads...")
-        for proc in acquisition_threads:
-            proc.start()
-
-        for proc in acquisition_threads:
-            proc.join()
-        logger.info(f"Finished Aquiring...")
-
-        logger.info(f"Saving Timestamp Sync Information...")
-        for i, (cam_name, cam_sn) in enumerate(cameras.items()):
-            write_sync_queue(sync_queues[i], cam_name, save_folders[i])
-
-        logger.info(f" Waiting for Save Queues to Empty...")
-        for q in save_queues:
-            while not q.empty():
-                time.sleep(1)
-
-        logger.info(f"Pipes are Empty. Camera Collection Finished without Interrupt")
-
-    except KeyboardInterrupt:
-        logger.info(f'Detected Keyboard Interrupt (main thread). Stopping Camera Acquisition')
-        #stop_collecting.set()
-
-    finally:
-        logger.info(f"All Finished - Ending Ximea Camera Now.")
