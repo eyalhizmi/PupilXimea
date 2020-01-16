@@ -57,11 +57,12 @@ class Ximea_Capture(Plugin):
         self.camera = None
         self.image_handle = None
         self.camera_open = False
-        self.currently_recording = False
-        self.currently_saving = False
         self.save_queue =  None
         self.blink_counter = 0
+
         self.stop_collecting_event = threading.Event()
+        self.currently_recording =  threading.Event()
+        self.currently_saving =  threading.Event()
 
         self.camera, self.image_handle, self.camera_open = ximea_utils.init_camera(self.serial_num, self.yaml_loc, logger)
 
@@ -74,6 +75,8 @@ class Ximea_Capture(Plugin):
             self.record_ximea = record_ximea
         def set_preview(preview_ximea):
             self.preview_ximea = preview_ximea
+            if(self.currently_recording.is_set() & self.preview_ximea):
+                logger.info('Cant preview while recording')
         def set_serial_num(new_serial_num):
             self.serial_num = new_serial_num
             if not self.camera == None:
@@ -109,18 +112,18 @@ class Ximea_Capture(Plugin):
 
     def gl_display(self):
         # blink?
-        if(int(self.blink_counter / 10) % 2 == 1):
-            if(self.currently_recording):
+        if int(self.blink_counter / 10) % 2 == 1:
+            if self.currently_recording.is_set():
                 draw_points_norm([(0.01,0.1)], size=35, color=RGBA(0.1, 1.0, 0.1, 0.8))
-            if(self.currently_saving):
+            if self.currently_saving.is_set():
                 draw_points_norm([(0.01,0.01)], size=35, color=RGBA(1.0, 0.1, 0.1, 0.8))
         self.blink_counter += 1
 
         if(self.preview_ximea):
-            if(self.currently_saving):
+            if(self.currently_recording.is_set()):
                 #if we are currently saving, don't grab images
                 im = np.ones((*self.imshape,3)).astype(np.uint8)
-                alp=0.5
+                alp=0
             elif(not self.camera_open):
                 logger.info(f'Camera Open: {self.camera_open}')
                 im = np.zeros((*self.imshape,3)).astype(np.uint8)
@@ -142,25 +145,21 @@ class Ximea_Capture(Plugin):
         '''
         if(char=='r'):
             if(self.record_ximea):
-                if(self.currently_recording):
+                if(self.currently_recording.is_set()):
                     logger.info('Stopping Recording from Ximea Cameras...')
                     self.stop_collecting_event.set()
-                    ximea_utils.end_ximea_aquisition(self.save_queue, self.currently_saving,
-                                                     logger)
-                    self.currently_recording = False
-                    logger.info('Finishing Saving Frames....')
-
-                elif(self.currently_saving and not self.currently_recording):
-                    logger.info('Ximea Can\'t Start Recording Again until saving finished! Only World & Eye Cameras are Recording!')
 
                 else:
                     logger.info('Starting Recording from Ximea Cameras...')
                     logger.info(f'Saving Ximea Frames at {self.save_dir}...')
+                    self.stop_collecting_event.clear()
                     self.save_queue = ximea_utils.start_ximea_aquisition(self.camera, self.image_handle,
                                                        self.save_dir, self.ims_per_file,
-                                                       self.stop_collecting_event, logger)
-                    self.currently_recording = True
-                    self.currently_saving = True
+                                                       self.stop_collecting_event,
+                                                       self.currently_recording,
+                                                       self.currently_saving,
+                                                       logger)
+
         return(False)
 
     def deinit_ui(self):

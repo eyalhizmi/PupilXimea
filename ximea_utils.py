@@ -86,44 +86,6 @@ def apply_cam_settings(cam, config_file):
         else:
             print(f"Camera doesn't have a set_{prop}")
 
-def save_queue_worker(cam_name, save_queue_out, save_folder, ims_per_file, stop_collecting_event, logger):
-    try:
-        if not os.path.exists(os.path.join(save_folder, cam_name)):
-            os.makedirs(os.path.join(save_folder, cam_name))
-            #os.chmod(save_folder, stat.S_IRWXO)
-        ts_file_name = os.path.join(save_folder, f"timestamps_{cam_name}.tsv")
-        #make a new blank timestamp file
-        with open(ts_file_name, 'w') as ts_file:
-            ts_file.write(f"nframe\ttime\n")
-        #open it for appending
-        ts_file = open(ts_file_name, 'a+')
-        i = 0
-        logger.info('Started Saving...')
-        if(ims_per_file == 1):
-            while (not stop_collecting_event.is_set())  or save_queue_out.empty():
-                bin_file_name = os.path.join(save_folder, cam_name, f'frame_{i}.bin')
-                f = os.open(bin_file_name, os.O_WRONLY | os.O_CREAT , 0o777 | os.O_TRUNC | os.O_SYNC | os.O_DIRECT)
-                image = save_queue_out.get()
-                os.write(f, image.raw_data)
-                ts_file.write(f"{i}\t{image.nframe}\t{image.tsSec}.{str(image.tsUSec).zfill(6)}\n")
-                i+=1
-        else:
-            while (not stop_collecting_event.is_set())  or save_queue_out.empty():
-                fstart=i*ims_per_file
-                bin_file_name = os.path.join(save_folder, cam_name, f'frames_{fstart}_{fstart+ims_per_file-1}.bin')
-                f = os.open(bin_file_name, os.O_WRONLY | os.O_CREAT , 0o777 | os.O_TRUNC | os.O_SYNC | os.O_DIRECT)
-                for j in range(ims_per_file):
-                    image = save_queue_out.get()
-                    os.write(f, image.raw_data)
-                    ts_file.write(f"{fstart+j}\t{image.nframe}\t{image.tsSec}.{str(image.tsUSec).zfill(6)}\n")
-                os.close(f)
-                i+=1
-
-    except Exception as e:
-        print(f'Exception!: e')
-        print('Exiting Save Thread')
-
-
 def init_camera(cam_id, settings_file, logger):
     '''
     Initialize a ximea camera for use (recoring and preview) by external scripts
@@ -154,7 +116,6 @@ def init_camera(cam_id, settings_file, logger):
         camera.close_device()
         return(None, None, False)
 
-
 def decode_ximea_frame(camera, image_handle, imshape, logger, norm=True):
     '''
     Get a single frame from ximea cameras
@@ -169,7 +130,50 @@ def decode_ximea_frame(camera, image_handle, imshape, logger, norm=True):
         im = cv2.normalize(im, None, 0, 255, cv2.NORM_MINMAX)
     return(im)
 
-def aquire_camera_worker(camera, image_handle, cam_name, sync_queue, save_queue, stop_collecting_event, logger):
+def save_queue_worker(cam_name, save_queue_out, save_folder, ims_per_file, stop_collecting_event, currently_saving, logger):
+    try:
+        if not os.path.exists(os.path.join(save_folder, cam_name)):
+            os.makedirs(os.path.join(save_folder, cam_name))
+            #os.chmod(save_folder, stat.S_IRWXO)
+        ts_file_name = os.path.join(save_folder, f"timestamps_{cam_name}.tsv")
+        #make a new blank timestamp file
+        with open(ts_file_name, 'w') as ts_file:
+            ts_file.write(f"nframe\ttime\n")
+        #open it for appending
+        ts_file = open(ts_file_name, 'a+')
+        i = 0
+        logger.info('Started Saving...')
+        currently_saving.set()
+        if(ims_per_file == 1):
+            while (not stop_collecting_event.is_set())  or save_queue_out.empty():
+                bin_file_name = os.path.join(save_folder, cam_name, f'frame_{i}.bin')
+                f = os.open(bin_file_name, os.O_WRONLY | os.O_CREAT , 0o777 | os.O_TRUNC | os.O_SYNC | os.O_DIRECT)
+                image = save_queue_out.get(True, 1)
+                os.write(f, image.raw_data)
+                ts_file.write(f"{i}\t{image.nframe}\t{image.tsSec}.{str(image.tsUSec).zfill(6)}\n")
+                i+=1
+        else:
+            while (not stop_collecting_event.is_set())  or save_queue_out.empty():
+                fstart=i*ims_per_file
+                bin_file_name = os.path.join(save_folder, cam_name, f'frames_{fstart}_{fstart+ims_per_file-1}.bin')
+                f = os.open(bin_file_name, os.O_WRONLY | os.O_CREAT , 0o777 | os.O_TRUNC | os.O_SYNC | os.O_DIRECT)
+                for j in range(ims_per_file):
+                    image = save_queue_out.get(True, 1)
+                    os.write(f, image.raw_data)
+                    ts_file.write(f"{fstart+j}\t{image.nframe}\t{image.tsSec}.{str(image.tsUSec).zfill(6)}\n")
+                os.close(f)
+                i+=1
+
+        logger.info(f"Finished Saving Frames from {cam_name}")
+        currently_saving.clear()
+
+    except Exception as e:
+        print(f'Exception!: e')
+        print('Exiting Save Thread')
+        currently_saving.clear()
+
+
+def aquire_camera_worker(camera, image_handle, cam_name, sync_queue, save_queue, stop_collecting_event, currently_recording, logger):
 
     """
     Acquire frames from a single camera. Can have mulitple instances of this to record from multiple cameras.
@@ -185,6 +189,7 @@ def aquire_camera_worker(camera, image_handle, cam_name, sync_queue, save_queue,
 
     try:
         logger.info(f'Begin Recording..')
+        currently_recording.set()
 
         while not stop_collecting_event.is_set():
             camera.get_image(image_handle)
@@ -204,11 +209,14 @@ def aquire_camera_worker(camera, image_handle, cam_name, sync_queue, save_queue,
         sync_queue.put(sync_str)
 
     finally:
+        currently_recording.clear()
         logger.info(f"Camera aquisition finished")
 
 def start_ximea_aquisition(camera, image_handle,
                             save_dir, ims_per_file,
-                            stop_collecting_event,
+                            stop_collecting,
+                            currently_recording,
+                            currently_saving,
                             logger):
 
     save_queue = queue.Queue()
@@ -221,7 +229,8 @@ def start_ximea_aquisition(camera, image_handle,
     save_proc = threading.Thread(target=save_queue_worker,
                             args=(cam_name, save_queue,
                                  save_dir, ims_per_file,
-                                 stop_collecting_event,
+                                 stop_collecting,
+                                 currently_saving,
                                  logger))
 
     acq_proc = threading.Thread(target=aquire_camera_worker,
@@ -230,7 +239,8 @@ def start_ximea_aquisition(camera, image_handle,
                                 cam_name,
                                 sync_queue,
                                 save_queue,
-                                stop_collecting_event,
+                                stop_collecting,
+                                currently_recording,
                                 logger))
     save_proc.daemon = True
     save_proc.start()
@@ -238,32 +248,3 @@ def start_ximea_aquisition(camera, image_handle,
     acq_proc.start()
 
     return(save_queue)
-
-def notify_ximea_save_finished(save_queue, currently_saving, logger):
-    '''
-    Notify when save threads are done.
-    '''
-    logger.info(f" Waiting for Save Queues to Empty...")
-    while not save_queue.empy():
-        time.sleep(1)
-
-    logger.info(f"Finished Saving")
-    currently_saving = False
-
-def end_ximea_aquisition(save_queue,
-                         currently_saving,
-                         logger):
-
-    notify_proc = threading.Thread(target=notify_ximea_save_finished,
-                          args=(save_queue, currently_saving,
-                                logger))
-    notify_proc.daemon = True
-    notify_proc.start()
-
-    save_queue.join()
-
-    logger.info(f"Finished Aquiring...")
-
-    # logger.info(f"Saving Timestamp Sync Information...")
-    # for i, (cam_name, cam_sn) in enumerate(cameras.items()):
-    #     write_sync_queue(sync_queues[i], cam_name, save_folders[i])
