@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 import os
 import cv2
 
+
 class Ximea_Capture(Plugin):
     """
     Ximea Capture captures frames from a Ximea camera
@@ -64,8 +65,15 @@ class Ximea_Capture(Plugin):
         self.currently_recording =  threading.Event()
         self.currently_saving =  threading.Event()
 
-        self.camera, self.image_handle, self.camera_open = ximea_utils.init_camera(self.serial_num, self.yaml_loc, logger)
-
+        try:
+            self.camera, self.image_handle, self.camera_open = ximea_utils.init_camera(self.serial_num, self.yaml_loc, logger)
+        except Exception as e:
+            logger.info(r'Problem with Opening Camera: {e}')
+        #time sync protocol
+        # def get_timestamp():
+        #     return get_time_monotonic() - g_pool.timebase.value
+        # g_pool.get_timestamp = get_timestamp
+        # g_pool.get_now = get_time_monotonic
 
     def init_ui(self):
         self.add_menu()
@@ -81,7 +89,10 @@ class Ximea_Capture(Plugin):
             self.serial_num = new_serial_num
             if not self.camera == None:
                 self.camera.close_device()
-            self.camera, self.image_handle, self.camera_open = ximea_utils.init_camera(self.serial_num, self.yaml_loc, logger)
+            try:
+                self.camera, self.image_handle, self.camera_open = ximea_utils.init_camera(self.serial_num, self.yaml_loc, logger)
+            except Exception as e:
+                logger.info(r'Problem with Serial Number: {e}')
         def set_save_dir():
             self.save_dir = os.path.join(f'/home/vasha/ximea_recordings/{self.subject}/{self.task}/')
             #self.menu.append(ui.Info_Text(f'Save Dir: {self.save_dir}'))
@@ -97,7 +108,10 @@ class Ximea_Capture(Plugin):
             self.yaml_loc = new_yaml_loc
             if not self.camera == None:
                 self.camera.close_device()
-            self.camera, self.image_handle, self.camera_open = ximea_utils.init_camera(self.serial_num, self.yaml_loc, logger)
+            try:
+                self.camera, self.image_handle, self.camera_open = ximea_utils.init_camera(self.serial_num, self.yaml_loc, logger)
+            except Exception as e:
+                logger.info(r'Problem with Yaml File: {e}')
 
         help_str = "Ximea Capture Captures frames from Ximea Cameras in Parallel with Record."
         self.menu.append(ui.Info_Text(help_str))
@@ -132,7 +146,7 @@ class Ximea_Capture(Plugin):
                 im = ximea_utils.decode_ximea_frame(self.camera, self.image_handle, self.imshape, logger)
                 alp=1
             #cv2.imshow('image',im)
-            cv2.imwrite('/home/vasha/img.png', im)
+            #cv2.imwrite('/home/vasha/img.png', im)
             gl_utils.make_coord_system_norm_based()
             draw_gl_texture(im, interpolation=True, alpha=alp)
 
@@ -158,6 +172,7 @@ class Ximea_Capture(Plugin):
                                                        self.stop_collecting_event,
                                                        self.currently_recording,
                                                        self.currently_saving,
+                                                       self.g_pool,
                                                        logger)
 
         return(False)

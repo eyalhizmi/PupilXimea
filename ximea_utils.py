@@ -33,27 +33,32 @@ def write_sync_queue(sync_queue, cam_name, save_folder):
     '''
     sync_file_name = os.path.join(save_folder, f"timestamp_camsync_{cam_name}.tsv")
     with open(sync_file_name, 'w') as sync_file:
-        sync_file.write(f"tcam_name\t_wall\t_cam\n")
+        sync_file.write(f"time_sync\ttime_wall\ttime_cam\n")
     #open it for appending
     sync_file = open(sync_file_name, 'a+')
-    while not sync_queue.empty():
-        sync_string = sync_queue.get()
-        sync_file.write(sync_string)
+
+    start_sync_string = sync_queue.get()
+    sync_file.write(start_sync_string)
+
+    end_sync_string = sync_queue.get()
+    sync_file.write(end_sync_string)
+
     return()
 
-def get_sync_string(cam_name, cam_handle):
+def get_sync_string(cam_name, cam_handle, g_pool):
     '''
     Clock camera and wall clocks together to ensure they match
     Params:
         cam_name (str): String name of camera (ie cam_od/cam_os/cam_cy
         cam_handle (XimeaCamera instance): camera handle to query time
+        g_pool: contains queriable clock
     Returns:
         sync_string (str): string to write to file with cam name, time, and wall time
     '''
-    t_wall_1 = time.time()
+    t_wall_1 = g_pool.get_timestamp()
     t_cam = cam_handle.get_param('timestamp')
     t_cam = t_cam/(1e9) #this is returned in nanoseconds, change to seconds
-    t_wall_2 = time.time()
+    t_wall_2 = g_pool.get_timestamp()
     t_wall = np.mean((t_wall_1, t_wall_2)) #take middle of two wall times
     sync_string = f'{cam_name}\t{t_wall}\t{t_cam}\n'
     return(sync_string)
@@ -138,7 +143,7 @@ def save_queue_worker(cam_name, save_queue_out, save_folder, ims_per_file, stop_
         ts_file_name = os.path.join(save_folder, f"timestamps_{cam_name}.tsv")
         #make a new blank timestamp file
         with open(ts_file_name, 'w') as ts_file:
-            ts_file.write(f"nframe\ttime\n")
+            ts_file.write(f"i\tframe\tcamtime\n")
         #open it for appending
         ts_file = open(ts_file_name, 'a+')
         i = 0
@@ -173,7 +178,7 @@ def save_queue_worker(cam_name, save_queue_out, save_folder, ims_per_file, stop_
         currently_saving.clear()
 
 
-def aquire_camera_worker(camera, image_handle, cam_name, sync_queue, save_queue, stop_collecting_event, currently_recording, logger):
+def aquire_camera_worker(camera, image_handle, cam_name, sync_queue, save_queue, save_dir, stop_collecting_event, currently_recording, g_pool, logger):
 
     """
     Acquire frames from a single camera. Can have mulitple instances of this to record from multiple cameras.
@@ -188,6 +193,10 @@ def aquire_camera_worker(camera, image_handle, cam_name, sync_queue, save_queue,
     """
 
     try:
+
+        sync_str = get_sync_string(cam_name + "_pre", camera, g_pool)
+        sync_queue.put(sync_str)
+
         logger.info(f'Begin Recording..')
         currently_recording.set()
 
@@ -200,13 +209,15 @@ def aquire_camera_worker(camera, image_handle, cam_name, sync_queue, save_queue,
                                    image_handle.tsUSec))
 
         logger.info(f'Stopping Ximea Collection')
-        sync_str = get_sync_string(cam_name + "_post", camera)
+        sync_str = get_sync_string(cam_name + "_post", camera, g_pool)
         sync_queue.put(sync_str)
+        write_sync_queue(sync_queue, cam_name, save_dir)
 
     except Exception as e:
         logger.info(f'Detected Exception {e} Stopping Acquisition')
-        sync_str = get_sync_string(cam_name + "_post", camera)
+        sync_str = get_sync_string(cam_name + "_post", camera, g_pool)
         sync_queue.put(sync_str)
+        write_sync_queue(sync_queue, cam_name, save_dir)
 
     finally:
         currently_recording.clear()
@@ -217,6 +228,7 @@ def start_ximea_aquisition(camera, image_handle,
                             stop_collecting,
                             currently_recording,
                             currently_saving,
+                            g_pool,
                             logger):
 
     save_queue = queue.Queue()
@@ -233,14 +245,17 @@ def start_ximea_aquisition(camera, image_handle,
                                  currently_saving,
                                  logger))
 
+
     acq_proc = threading.Thread(target=aquire_camera_worker,
                           args=(camera,
                                 image_handle,
                                 cam_name,
                                 sync_queue,
                                 save_queue,
+                                save_dir,
                                 stop_collecting,
                                 currently_recording,
+                                g_pool,
                                 logger))
     save_proc.daemon = True
     save_proc.start()
