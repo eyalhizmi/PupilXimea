@@ -33,7 +33,7 @@ def write_sync_queue(sync_queue, cam_name, save_folder):
     '''
     sync_file_name = os.path.join(save_folder, f"timestamp_camsync_{cam_name}.tsv")
     with open(sync_file_name, 'w') as sync_file:
-        sync_file.write(f"time_sync\ttime_wall\ttime_cam\n")
+        sync_file.write(f"cam\ttime_sync\ttime_cam\ttime_wall\n")
     #open it for appending
     sync_file = open(sync_file_name, 'a+')
 
@@ -45,7 +45,7 @@ def write_sync_queue(sync_queue, cam_name, save_folder):
 
     return()
 
-def get_sync_string(cam_name, cam_handle, g_pool):
+def get_sync_string(cam_name, cam_handle, save_dir, g_pool):
     '''
     Clock camera and wall clocks together to ensure they match
     Params:
@@ -55,12 +55,15 @@ def get_sync_string(cam_name, cam_handle, g_pool):
     Returns:
         sync_string (str): string to write to file with cam name, time, and wall time
     '''
-    t_wall_1 = g_pool.get_timestamp()
+    t_wall_1 = time.time()
+    t_sync_1 = g_pool.get_timestamp()
     t_cam = cam_handle.get_param('timestamp')
     t_cam = t_cam/(1e9) #this is returned in nanoseconds, change to seconds
-    t_wall_2 = g_pool.get_timestamp()
+    t_sync_2 = g_pool.get_timestamp()
+    t_wall_2 = time.time()
+    t_sync = np.mean((t_sync_1, t_sync_2)) #take middle of two wall times
     t_wall = np.mean((t_wall_1, t_wall_2)) #take middle of two wall times
-    sync_string = f'{cam_name}\t{t_wall}\t{t_cam}\n'
+    sync_string = f'{cam_name}\t{t_sync}\t{t_cam}\t{t_wall}\n'
     return(sync_string)
 
 def apply_cam_settings(cam, config_file):
@@ -194,7 +197,7 @@ def aquire_camera_worker(camera, image_handle, cam_name, sync_queue, save_queue,
 
     try:
 
-        sync_str = get_sync_string(cam_name + "_pre", camera, g_pool)
+        sync_str = get_sync_string(cam_name + "_pre", camera, save_dir, g_pool)
         sync_queue.put(sync_str)
 
         logger.info(f'Begin Recording..')
@@ -209,13 +212,13 @@ def aquire_camera_worker(camera, image_handle, cam_name, sync_queue, save_queue,
                                    image_handle.tsUSec))
 
         logger.info(f'Stopping Ximea Collection')
-        sync_str = get_sync_string(cam_name + "_post", camera, g_pool)
+        sync_str = get_sync_string(cam_name + "_post", camera, save_dir, g_pool)
         sync_queue.put(sync_str)
         write_sync_queue(sync_queue, cam_name, save_dir)
 
     except Exception as e:
         logger.info(f'Detected Exception {e} Stopping Acquisition')
-        sync_str = get_sync_string(cam_name + "_post", camera, g_pool)
+        sync_str = get_sync_string(cam_name + "_post", camera, save_dir, g_pool)
         sync_queue.put(sync_str)
         write_sync_queue(sync_queue, cam_name, save_dir)
 

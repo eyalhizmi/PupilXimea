@@ -39,11 +39,11 @@ class Ximea_Capture(Plugin):
     icon_chr = "X"
 
     def __init__(self, g_pool,
-    record_ximea=True, preview_ximea=False,
+    record_ximea=False, preview_ximea=False,
     serial_num='XECAS1930001', subject='TEST_SUBJECT', task='TEST_TASK',
      yaml_loc='/home/vasha/cy.yaml', imshape=(1544, 2064), ims_per_file=200):
         super().__init__(g_pool)
-        self.order = 0.8
+        self.order = 0.1
         #self.pupil_display_list = []
 
         self.record_ximea = record_ximea
@@ -60,6 +60,8 @@ class Ximea_Capture(Plugin):
         self.camera_open = False
         self.save_queue =  None
         self.blink_counter = 0
+
+        self.save_folder = g_pool.rec_dir
 
         self.stop_collecting_event = threading.Event()
         self.currently_recording =  threading.Event()
@@ -94,6 +96,7 @@ class Ximea_Capture(Plugin):
             except Exception as e:
                 logger.info(r'Problem with Serial Number: {e}')
         def set_save_dir():
+            #self.save_dir = self.rec_dir
             self.save_dir = os.path.join(f'/home/vasha/ximea_recordings/{self.subject}/{self.task}/')
             #self.menu.append(ui.Info_Text(f'Save Dir: {self.save_dir}'))
             logger.info(f'Save Dir set to: {self.save_dir}')
@@ -179,7 +182,6 @@ class Ximea_Capture(Plugin):
 
     def deinit_ui(self):
         self.remove_menu()
-
 
     def cleanup(self):
         """
