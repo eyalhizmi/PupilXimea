@@ -8,24 +8,23 @@ transport_data_target: XI_TRANSPORT_DATA_TARGET_CPU_RAM
 width: 2064
 height: 1544
 
-is_output_bit_packing: false
-
+imgdataformat: XI_RAW8
 image_data_bit_depth: XI_BPP_8
 output_bit_depth: XI_BPP_8
 sensor_bit_depth: XI_BPP_8
-imgdataformat: XI_RAW8
+is_output_bit_packing: false
 
 acq_buffer_size: 100000000
 acq_buffer_size_unit: 1
 buffers_queue_size: 2
 
-gain: 0
 gain_selector: XI_GAIN_SELECTOR_ALL
+gain: 0
 
 is_aeag: false
 
 is_auto_bandwidth_calculation: false
-limit_bandwidth: 10000
+limit_bandwidth: 6400
 limit_bandwidth_mode: XI_ON
 buffer_policy: XI_BP_UNSAFE
 exposure: 4850
