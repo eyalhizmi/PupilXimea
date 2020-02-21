@@ -45,6 +45,15 @@ def write_sync_queue(sync_queue, cam_name, save_folder):
 
     return()
 
+def write_user_info(folder, subject_name, task_name):
+    '''
+    Write a user info file in the folder with info about the suject and task
+    '''
+    user_info_file_name = os.path.join(folder, 'user_task_info.txt')
+    with open(user_info_file_name, 'w') as f:
+        f.write(f'subject\ttask\n{subject_name}\t{task_name}')
+    return()
+
 def get_sync_string(cam_name, cam_handle, save_dir, g_pool):
     '''
     Clock camera and wall clocks together to ensure they match
@@ -119,7 +128,6 @@ def init_camera(cam_id, settings_file, logger):
         return(camera, image, True)
     except:
         logger.info('Problem initializing camera.')
-        logger.info('Check .yaml file')
         camera.stop_acquisition()
         camera.close_device()
         return(None, None, False)
