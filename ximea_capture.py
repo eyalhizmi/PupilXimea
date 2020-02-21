@@ -70,7 +70,7 @@ class Ximea_Capture(Plugin):
         try:
             self.camera, self.image_handle, self.camera_open = ximea_utils.init_camera(self.serial_num, self.yaml_loc, logger)
         except Exception as e:
-            logger.info(r'Problem with Opening Camera: {e}')
+            logger.info(f'Problem with Opening Camera: {e}')
             self.preview_ximea = False
             self.record_ximea = False
         #time sync protocol
@@ -96,6 +96,13 @@ class Ximea_Capture(Plugin):
             self.preview_ximea = preview_ximea
             if(self.currently_recording.is_set() & self.preview_ximea):
                 logger.info('Cant preview while recording')
+            # try:
+            #     self.camera, self.image_handle, self.camera_open = ximea_utils.init_camera(self.serial_num, self.yaml_loc, logger)
+            # except Exception as e:
+            #     logger.info('Unable to Open Camera for Recording!')
+            #     logger.info(f'Error: {e}')
+            #     self.preview_ximea = False
+            #     self.record_ximea = False
         def set_serial_num(new_serial_num):
             self.serial_num = new_serial_num
             if not self.camera == None:
@@ -106,16 +113,10 @@ class Ximea_Capture(Plugin):
                 logger.info(f'Problem with Serial Number: {e}')
                 self.preview_ximea = False
                 self.record_ximea = False
-        # def set_save_dir():
-        #     #self.save_dir = self.rec_dir
-        #     self.save_dir = os.path.join(f'/home/vasha/ximea_recordings/{self.subject}/{self.task}/')
-        #     #self.menu.append(ui.Info_Text(f'Save Dir: {self.save_dir}'))
-        #     logger.info(f'Save Dir set to: {self.save_dir}')
         def set_subject_id(new_subject):
             self.subject = new_subject
         def set_task_name(new_task_name):
             self.task = new_task_name
-
         def set_yaml_loc(new_yaml_loc):
             self.yaml_loc = new_yaml_loc
             if not self.camera == None:
@@ -163,6 +164,11 @@ class Ximea_Capture(Plugin):
             #cv2.imwrite('/home/vasha/img.png', im)
             gl_utils.make_coord_system_norm_based()
             draw_gl_texture(im, interpolation=True, alpha=alp)
+
+        if(self.record_ximea):
+            if not self.camera_open:
+                logger.info('Camera Not Open!')
+                self.record_ximea = False
 
     def get_init_dict(self):
         return {}
