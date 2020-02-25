@@ -39,9 +39,9 @@ class Ximea_Capture(Plugin):
     icon_chr = "X"
 
     def __init__(self, g_pool,
-    record_ximea=False, preview_ximea=False,
+    record_ximea=True, preview_ximea=False,
     serial_num='XECAS1930001', subject='TEST_SUBJECT', task='TEST_TASK',
-     yaml_loc='~/cam_settings.yaml', imshape=(1544, 2064), ims_per_file=200):
+     yaml_loc='/home/vasha/cy.yaml', imshape=(1544, 2064), ims_per_file=200):
         super().__init__(g_pool)
         self.order = 0.1
         #self.pupil_display_list = []
